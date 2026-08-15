@@ -31,12 +31,14 @@ nvidia-nccl-cu12==2.21.5
 nvidia-nvjitlink-cu12==12.9.86
 nvidia-nvtx-cu12==12.1.105
 packaging==26.3
+protobuf==7.35.1
 psutil==7.2.2
 Pygments==2.20.0
 PyYAML==6.0.3
 regex==2026.7.19
 rich==15.0.0
 safetensors==0.8.0
+sentencepiece==0.2.2
 setuptools==78.1.0
 shellingham==1.5.4
 sympy==1.13.1
