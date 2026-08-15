@@ -1,0 +1,18 @@
+services:
+  home-assistant:
+    build: .
+    container_name: home-assistant
+    stdin_open: true   # keep stdin open so the input() loop works
+    tty: true           # allocate a pseudo-TTY for interactive use
+    volumes:
+      - hf_cache:/app/hf_cache   # persist downloaded model weights across restarts
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+ 
+volumes:
+  hf_cache:

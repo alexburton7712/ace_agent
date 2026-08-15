@@ -1,5 +1,6 @@
 # Virtual environment
 venv/
+.venv/
 
 # Python cache
 __pycache__/
@@ -9,3 +10,12 @@ __pycache__/
 .direnv/
 
 .envrc
+
+# Hugging Face model cache (huge, gets rebuilt automatically)
+hf_cache/
+
+# Docker
+*.tar
+
+# OS clutter
+.DS_Store

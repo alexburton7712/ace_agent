@@ -1,0 +1,45 @@
+# --- Version control ---
+.git
+.gitignore
+
+# --- Secrets (never send these into the build context) ---
+.env
+*.env
+.env.*
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# --- Model / data caches (these belong in the named volume, not the image) ---
+hf_cache/
+*.bin
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+
+# --- Editor / OS clutter ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Docker itself ---
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# --- Logs ---
+*.log
+logs/
