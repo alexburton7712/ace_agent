@@ -244,7 +244,7 @@ class ThinkStreamParser:
 # Generation
 # --------------------------------------------------
 
-async def generate_stream(messages):
+async def generate_stream(messages, tools=None):
     """
     Generate a streaming response from Qwen.
 
@@ -266,6 +266,7 @@ async def generate_stream(messages):
     chat_params = ChatParams(
         chat_template_kwargs={
             "add_generation_prompt": True,
+            "tools": tools or [],
         },
     )
 
