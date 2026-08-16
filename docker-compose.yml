@@ -1,11 +1,18 @@
 services:
   home-assistant:
+    image: epicsnail7712/home-assistant:latest
     build: .
     container_name: home-assistant
+
     stdin_open: true   # keep stdin open so the input() loop works
-    tty: true           # allocate a pseudo-TTY for interactive use
+    tty: true          # allocate a pseudo-TTY for interactive use
+
+    environment:
+      - TZ=America/Phoenix
+
     volumes:
       - hf_cache:/app/hf_cache   # persist downloaded model weights across restarts
+
     deploy:
       resources:
         reservations:
@@ -13,6 +20,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
- 
+
 volumes:
   hf_cache:
