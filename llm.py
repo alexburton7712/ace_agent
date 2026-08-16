@@ -1,4 +1,3 @@
-import asyncio
 import os
 
 from vllm import SamplingParams
@@ -7,13 +6,6 @@ from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.renderers import ChatParams
 
 from settings import PROFILES
-
-PROMPT_FILE = "assistant_prompt.md"
-
-# Load Ace's system prompt
-with open(PROMPT_FILE, "r", encoding="utf-8") as f:
-    SYSTEM_PROMPT = f.read()
-
 
 # --------------------------------------------------
 # Select hardware/model profile
@@ -47,12 +39,19 @@ engine_args = AsyncEngineArgs(
 
 engine = AsyncLLMEngine.from_engine_args(engine_args)
 
+
+# --------------------------------------------------
+# Request ID handling
+# --------------------------------------------------
+
 _request_counter = 0
 
 
 def _next_request_id() -> str:
     global _request_counter
+
     _request_counter += 1
+
     return str(_request_counter)
 
 
@@ -77,7 +76,11 @@ class ThinkStreamParser:
         This prevents streaming chunks like "<thi" from
         accidentally being emitted before "nk>" arrives.
         """
-        max_length = min(len(text), len(tag) - 1)
+
+        max_length = min(
+            len(text),
+            len(tag) - 1,
+        )
 
         for length in range(max_length, 0, -1):
             if text.endswith(tag[:length]):
@@ -87,35 +90,54 @@ class ThinkStreamParser:
 
     def feed(self, text: str):
         """
-        Returns a list of:
+        Parse newly generated text.
+
+        Returns a list containing:
 
             ("thinking", text)
             ("response", text)
 
-        <think> tags themselves are not included.
+        The <think> and </think> tags themselves are
+        removed and are not emitted.
         """
+
         self.buffer += text
+
         chunks = []
 
         while self.buffer:
+
+            # ------------------------------------------
+            # Currently inside <think>
+            # ------------------------------------------
+
             if self.inside_think:
-                close_index = self.buffer.find(self.CLOSE_TAG)
+                close_index = self.buffer.find(
+                    self.CLOSE_TAG
+                )
 
                 # Found </think>
                 if close_index != -1:
+
                     if close_index > 0:
                         chunks.append(
-                            ("thinking", self.buffer[:close_index])
+                            (
+                                "thinking",
+                                self.buffer[:close_index],
+                            )
                         )
 
                     self.buffer = self.buffer[
-                        close_index + len(self.CLOSE_TAG):
+                        close_index
+                        + len(self.CLOSE_TAG):
                     ]
 
                     self.inside_think = False
+
                     continue
 
-                # Closing tag may be split across stream chunks
+                # Closing tag may be split across
+                # multiple streaming chunks.
                 keep = self._partial_tag_length(
                     self.buffer,
                     self.CLOSE_TAG,
@@ -125,30 +147,49 @@ class ThinkStreamParser:
 
                 if safe_length > 0:
                     chunks.append(
-                        ("thinking", self.buffer[:safe_length])
+                        (
+                            "thinking",
+                            self.buffer[:safe_length],
+                        )
                     )
 
-                self.buffer = self.buffer[safe_length:]
+                self.buffer = self.buffer[
+                    safe_length:
+                ]
+
                 break
 
+            # ------------------------------------------
+            # Currently outside <think>
+            # ------------------------------------------
+
             else:
-                open_index = self.buffer.find(self.OPEN_TAG)
+                open_index = self.buffer.find(
+                    self.OPEN_TAG
+                )
 
                 # Found <think>
                 if open_index != -1:
+
                     if open_index > 0:
                         chunks.append(
-                            ("response", self.buffer[:open_index])
+                            (
+                                "response",
+                                self.buffer[:open_index],
+                            )
                         )
 
                     self.buffer = self.buffer[
-                        open_index + len(self.OPEN_TAG):
+                        open_index
+                        + len(self.OPEN_TAG):
                     ]
 
                     self.inside_think = True
+
                     continue
 
-                # Opening tag may be split across stream chunks
+                # Opening tag may be split across
+                # multiple streaming chunks.
                 keep = self._partial_tag_length(
                     self.buffer,
                     self.OPEN_TAG,
@@ -158,18 +199,26 @@ class ThinkStreamParser:
 
                 if safe_length > 0:
                     chunks.append(
-                        ("response", self.buffer[:safe_length])
+                        (
+                            "response",
+                            self.buffer[:safe_length],
+                        )
                     )
 
-                self.buffer = self.buffer[safe_length:]
+                self.buffer = self.buffer[
+                    safe_length:
+                ]
+
                 break
 
         return chunks
 
     def finish(self):
         """
-        Flush anything left when generation ends.
+        Flush anything remaining in the parser when
+        generation ends.
         """
+
         if not self.buffer:
             return []
 
@@ -180,9 +229,15 @@ class ThinkStreamParser:
         )
 
         remaining = self.buffer
+
         self.buffer = ""
 
-        return [(chunk_type, remaining)]
+        return [
+            (
+                chunk_type,
+                remaining,
+            )
+        ]
 
 
 # --------------------------------------------------
@@ -190,6 +245,19 @@ class ThinkStreamParser:
 # --------------------------------------------------
 
 async def generate_stream(messages):
+    """
+    Generate a streaming response from Qwen.
+
+    Yields:
+
+        ("thinking", text)
+        ("response", text)
+
+    Thinking is emitted so the UI / terminal can display
+    it, but it is up to the agent layer whether thinking
+    gets saved into conversation history.
+    """
+
     sampling_params = SamplingParams(
         max_tokens=PROFILE["max_tokens"],
         temperature=PROFILE["temperature"],
@@ -197,10 +265,11 @@ async def generate_stream(messages):
 
     chat_params = ChatParams(
         chat_template_kwargs={
-            "add_generation_prompt": True
+            "add_generation_prompt": True,
         },
     )
 
+    # Render the conversation into Qwen's chat template.
     _, engine_inputs = await engine.renderer.render_chat_async(
         [messages],
         chat_params,
@@ -215,105 +284,46 @@ async def generate_stream(messages):
     )
 
     previous_text = ""
+
     parser = ThinkStreamParser()
 
     async for request_output in results_generator:
-        current_text = request_output.outputs[0].text
 
-        # vLLM gives us the full generated text so far,
-        # so extract only the newly generated part.
-        new_text = current_text[len(previous_text):]
+        current_text = (
+            request_output
+            .outputs[0]
+            .text
+        )
+
+        # vLLM returns the entire generated response
+        # each iteration, rather than only the new token.
+        #
+        # Strip off everything we have already seen.
+        new_text = current_text[
+            len(previous_text):
+        ]
+
         previous_text = current_text
 
         if not new_text:
             continue
 
-        for chunk_type, chunk in parser.feed(new_text):
+        # Split streamed output into thinking vs
+        # user-visible response chunks.
+        for chunk_type, chunk in parser.feed(
+            new_text
+        ):
             if chunk:
-                yield chunk_type, chunk
+                yield (
+                    chunk_type,
+                    chunk,
+                )
 
-    # Flush any remaining buffered text
+    # Flush any text still buffered after generation
+    # finishes.
     for chunk_type, chunk in parser.finish():
         if chunk:
-            yield chunk_type, chunk
-
-
-# --------------------------------------------------
-# Main conversation loop
-# --------------------------------------------------
-
-async def main():
-    # This list now holds the entire conversation.
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT,
-        }
-    ]
-
-    while True:
-        prompt = await asyncio.to_thread(input, "You: ")
-
-        # Save user's message to conversation history
-        messages.append(
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        )
-
-        print("Ace:", end=" ", flush=True)
-
-        response = ""
-
-        showing_thinking = False
-        showing_response = False
-
-        async for chunk_type, chunk in generate_stream(messages):
-
-            # ------------------------------------------
-            # Thinking
-            # ------------------------------------------
-            if chunk_type == "thinking":
-                if not showing_thinking:
-                    print("<think>", flush=True)
-                    showing_thinking = True
-
-                print(chunk, end="", flush=True)
-
-            # ------------------------------------------
-            # Actual response
-            # ------------------------------------------
-            elif chunk_type == "response":
-                if not showing_response:
-                    if showing_thinking:
-                        print("\n</think>")
-
-                    showing_response = True
-
-                # Show actual response
-                print(chunk, end="", flush=True)
-
-                # ONLY actual response gets saved
-                response += chunk
-
-        print()
-
-        messages.append(
-            {
-                "role": "assistant",
-                "content": response,
-            }
-        )
-
-
-# --------------------------------------------------
-# Entry point
-# --------------------------------------------------
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nShutting down.")
-        os._exit(0)
+            yield (
+                chunk_type,
+                chunk,
+            )

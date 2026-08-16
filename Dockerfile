@@ -61,4 +61,4 @@ ENV HF_HOME=/app/hf_cache
 # Limit parallel compilation so Docker/container memory isn't exhausted
 ENV MAX_JOBS=4
 
-CMD ["python3", "model.py"]
+CMD ["python3", "main.py"]
