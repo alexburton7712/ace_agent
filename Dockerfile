@@ -1,44 +1,65 @@
-# CUDA-enabled base image with Python
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
- 
-# Avoid interactive prompts during apt installs
+# CUDA 13 development image
+# vLLM 0.27.1 and your requirements.txt use CUDA 13.x packages.
+FROM nvidia/cuda:13.0.2-devel-ubuntu22.04
+
 ENV DEBIAN_FRONTEND=noninteractive
- 
-# Install Python 3.12 and prerequisites (python3-pip removed here)
+
+# CUDA environment
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+
+# Prevent CUDA architecture auto-detection from causing unnecessary
+# compilation problems. Change this if you know your GPU architecture.
+# ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
+
+# Install Python 3.12 and build tools
 RUN apt-get update && apt-get install -y \
     software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y \
-    python3.12 \
-    python3.12-venv \
-    python3.12-dev \
     curl \
+    git \
+    build-essential \
+    ninja-build \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y \
+        python3.12 \
+        python3.12-dev \
+        python3.12-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Python 3.12 as the primary system python interpreter
+# Make Python 3.12 the default
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
     && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
 
-# Correct bootstrap URL for installing pip directly to Python 3.12
+# Install pip
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3
- 
+
 WORKDIR /app
- 
-# Install Python deps first (better layer caching)
+
+# Copy requirements first for Docker layer caching
 COPY requirements.txt .
 
-# Upgrade pip to absolute latest modern standards and build dependencies
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+# Upgrade packaging tools
+RUN python3 -m pip install --no-cache-dir --upgrade \
+    pip \
+    setuptools \
+    wheel
 
-# FIXED: Replaced marketing link with the correct PyTorch CUDA package wheel repository
-RUN python3 -m pip install --no-cache-dir -r requirements.txt \
-    --extra-index-url https://download.pytorch.org/whl/cu121
- 
-# Copy the app + prompt
+# Install the EXACT pinned vLLM environment.
+#
+# Do NOT add the old CUDA 12.1 PyTorch index here.
+# Your requirements already contain CUDA 13 packages.
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
+
+# Copy application
 COPY model.py .
 COPY assistant_prompt.md .
- 
-# Hugging Face cache lives in a mounted volume (see docker-compose.yml)
+
+# Hugging Face cache
 ENV HF_HOME=/app/hf_cache
- 
+
+# Limit parallel compilation so Docker/container memory isn't exhausted
+ENV MAX_JOBS=4
+
 CMD ["python3", "model.py"]
