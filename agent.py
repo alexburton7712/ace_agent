@@ -1,3 +1,5 @@
+import asyncio
+
 from llm import generate_stream
 
 
@@ -20,7 +22,7 @@ class Agent:
 
     async def run(self):
         while True:
-            prompt = input("You: ")
+            prompt = await asyncio.to_thread(input, "You: ")
 
             self.messages.append({
                 "role": "user",
