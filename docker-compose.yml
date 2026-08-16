@@ -1,8 +1,8 @@
 services:
-  home-assistant:
-    image: epicsnail7712/home-assistant:latest
+  ace:
+    image: epicsnail7712/ace:latest
     build: .
-    container_name: home-assistant
+    container_name: ace
 
     stdin_open: true   # keep stdin open so the input() loop works
     tty: true          # allocate a pseudo-TTY for interactive use
