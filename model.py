@@ -6,24 +6,43 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.renderers import ChatParams
 
-# AWQ-quantized checkpoint: ~4-bit weights instead of bf16, roughly 1/3
-# the VRAM footprint. Needed because full bf16 Qwen3-4B (~8GB) doesn't
-# fit on an 8GB card alongside the KV cache.
-MODEL_NAME = "Qwen/Qwen3-4B-AWQ"
+from settings import PROFILES
+
 PROMPT_FILE = "assistant_prompt.md"
 
-# Load Ace's system prompt from the markdown file
+# Load Ace's system prompt
 with open(PROMPT_FILE, "r", encoding="utf-8") as f:
     SYSTEM_PROMPT = f.read()
 
-# AsyncLLMEngine gives us token-by-token streaming without a separate
-# server process.
+
+# --------------------------------------------------
+# Select hardware/model profile
+# --------------------------------------------------
+
+PROFILE_NAME = os.getenv("ACE_PROFILE", "local").lower()
+
+if PROFILE_NAME not in PROFILES:
+    raise ValueError(
+        f"Unknown ACE_PROFILE '{PROFILE_NAME}'. "
+        f"Valid profiles: {', '.join(PROFILES.keys())}"
+    )
+
+PROFILE = PROFILES[PROFILE_NAME]
+
+print(f"Profile: {PROFILE_NAME}")
+print(f"Model: {PROFILE['model']}")
+
+
+# --------------------------------------------------
+# vLLM engine
+# --------------------------------------------------
+
 engine_args = AsyncEngineArgs(
-    model=MODEL_NAME,
-    quantization="awq",
-    dtype="float16",
-    gpu_memory_utilization=0.75,
-    max_model_len=8192,
+    model=PROFILE["model"],
+    quantization=PROFILE["quantization"],
+    dtype=PROFILE["dtype"],
+    gpu_memory_utilization=PROFILE["gpu_memory_utilization"],
+    max_model_len=PROFILE["max_model_len"],
 )
 
 engine = AsyncLLMEngine.from_engine_args(engine_args)
@@ -44,17 +63,15 @@ async def generate_stream(prompt: str):
     ]
 
     sampling_params = SamplingParams(
-        max_tokens=512,
-        temperature=0,
+        max_tokens=PROFILE["max_tokens"],
+        temperature=PROFILE["temperature"],
     )
 
-    # vLLM 0.27.1 renderer handles:
-    #   1. chat-template formatting
-    #   2. tokenization
-    #   3. creation of the EngineInput expected by AsyncLLM
     chat_params = ChatParams(
-    chat_template_kwargs={"add_generation_prompt": True},
-)
+        chat_template_kwargs={
+            "add_generation_prompt": True
+        },
+    )
 
     _, engine_inputs = await engine.renderer.render_chat_async(
         [messages],
@@ -73,6 +90,7 @@ async def generate_stream(prompt: str):
 
     async for request_output in results_generator:
         current_text = request_output.outputs[0].text
+
         new_text = current_text[len(previous_text):]
         previous_text = current_text
 

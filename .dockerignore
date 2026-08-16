@@ -43,3 +43,5 @@ docker-compose.yml
 # --- Logs ---
 *.log
 logs/
+
+local_notes.txt

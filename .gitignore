@@ -19,3 +19,5 @@ hf_cache/
 
 # OS clutter
 .DS_Store
+
+local_notes.txt

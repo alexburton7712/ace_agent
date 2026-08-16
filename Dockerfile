@@ -53,8 +53,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade \
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Copy application
-COPY model.py .
-COPY assistant_prompt.md .
+COPY . .
 
 # Hugging Face cache
 ENV HF_HOME=/app/hf_cache
