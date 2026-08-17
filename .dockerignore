@@ -45,3 +45,5 @@ docker-compose.yml
 logs/
 
 local_notes.txt
+
+.env

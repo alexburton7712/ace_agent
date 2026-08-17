@@ -21,3 +21,5 @@ hf_cache/
 .DS_Store
 
 local_notes.txt
+
+.env

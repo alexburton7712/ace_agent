@@ -7,8 +7,8 @@ services:
     stdin_open: true   # keep stdin open so the input() loop works
     tty: true          # allocate a pseudo-TTY for interactive use
 
-    environment:
-      - TZ=America/Phoenix
+    env_file:
+      - .env
 
     volumes:
       - hf_cache:/app/hf_cache   # persist downloaded model weights across restarts
