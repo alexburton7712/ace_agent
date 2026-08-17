@@ -90,7 +90,11 @@ async def _call_light_service(
 
 @tool
 async def list_lights() -> dict:
-    """List every light and light group currently exposed by Home Assistant."""
+    """List every light and light group currently exposed by Home Assistant.
+
+    Call this before using a lighting control tool. Use the returned entity IDs,
+    current states, and supported color modes to choose a valid target and action.
+    """
     try:
         async with HomeAssistantClient() as client:
             states = await client.get_states()
@@ -114,7 +118,7 @@ async def list_lights() -> dict:
 
 @tool
 async def turn_on_light(light: str) -> dict:
-    """Turn on a Home Assistant light.
+    """Turn on a Home Assistant light after calling list_lights.
 
     Args:
         light: Friendly name or entity ID of the light to turn on.
@@ -124,7 +128,7 @@ async def turn_on_light(light: str) -> dict:
 
 @tool
 async def turn_off_light(light: str) -> dict:
-    """Turn off a Home Assistant light.
+    """Turn off a Home Assistant light after calling list_lights.
 
     Args:
         light: Friendly name or entity ID of the light to turn off.
@@ -134,7 +138,7 @@ async def turn_off_light(light: str) -> dict:
 
 @tool
 async def set_light_brightness(light: str, brightness: int) -> dict:
-    """Set a Home Assistant light's brightness and turn it on.
+    """Set a light's brightness after calling list_lights, and turn it on.
 
     Args:
         light: Friendly name or entity ID of the light to control.
@@ -164,7 +168,7 @@ async def set_light_brightness(light: str, brightness: int) -> dict:
 
 @tool
 async def set_light_color(light: str, red: int, green: int, blue: int) -> dict:
-    """Set a Home Assistant light to an RGB color and turn it on.
+    """Set a light to RGB after list_lights confirms color support, and turn it on.
 
     Args:
         light: Friendly name or entity ID of the light to control.
@@ -198,7 +202,7 @@ async def set_light_color(light: str, red: int, green: int, blue: int) -> dict:
 
 @tool
 async def set_light_color_temperature(light: str, temperature: int) -> dict:
-    """Set a Home Assistant light's white color temperature and turn it on.
+    """Set white temperature after list_lights confirms support, and turn the light on.
 
     Args:
         light: Friendly name or entity ID of the light to control.
