@@ -4,11 +4,21 @@ import re
 import uuid
 
 from llm import generate_stream
-from tools.registry import execute_tool, get_tool_schemas
+from tools.registry import (
+    discover_tools,
+    execute_tool,
+    get_tool_schemas,
+)
 
 
 class Agent:
     def __init__(self):
+        # Discover all @tool decorated functions once at startup.
+        discover_tools()
+
+        # Build the schemas once and give them to the LLM.
+        self.tools = get_tool_schemas()
+
         self.messages = [
             {
                 "role": "system",
@@ -26,7 +36,10 @@ class Agent:
 
     async def run(self):
         while True:
-            prompt = await asyncio.to_thread(input, "You: ")
+            prompt = await asyncio.to_thread(
+                input,
+                "You: ",
+            )
 
             self.messages.append({
                 "role": "user",
@@ -36,9 +49,13 @@ class Agent:
             await self.respond()
 
     async def respond(self):
-        print("Ace:", end=" ", flush=True)
+        print(
+            "Ace:",
+            end=" ",
+            flush=True,
+        )
 
-        # Allow several tool calls before giving up
+        # Allow several rounds of tool calls before giving up.
         for _ in range(8):
             response = ""
 
@@ -48,21 +65,25 @@ class Agent:
 
             async for chunk_type, chunk in generate_stream(
                 self.messages,
-                tools=get_tool_schemas(),
+                tools=self.tools,
             ):
                 if chunk_type == "thinking":
                     if not showing_thinking:
                         print("<think>")
                         showing_thinking = True
 
-                    print(chunk, end="", flush=True)
+                    print(
+                        chunk,
+                        end="",
+                        flush=True,
+                    )
 
                 elif chunk_type == "response":
                     response += chunk
                     response_buffer += chunk
 
                     # Qwen may be starting a tool call.
-                    # Don't print it to the user.
+                    # Don't print tool-call markup to the user.
                     stripped = response_buffer.lstrip()
 
                     if (
@@ -71,14 +92,19 @@ class Agent:
                     ):
                         continue
 
-                    # Normal assistant response
+                    # Normal assistant response.
                     if not showing_response:
                         if showing_thinking:
                             print("\n</think>")
 
                         showing_response = True
 
-                    print(response_buffer, end="", flush=True)
+                    print(
+                        response_buffer,
+                        end="",
+                        flush=True,
+                    )
+
                     response_buffer = ""
 
             tool_calls = self._parse_tool_calls(response)
@@ -87,12 +113,18 @@ class Agent:
             # Normal response
             # ----------------------------------------
             if not tool_calls:
-                # Print anything still buffered
                 if response_buffer:
-                    if not showing_response and showing_thinking:
+                    if (
+                        not showing_response
+                        and showing_thinking
+                    ):
                         print("\n</think>")
 
-                    print(response_buffer, end="", flush=True)
+                    print(
+                        response_buffer,
+                        end="",
+                        flush=True,
+                    )
 
                 print()
 
@@ -103,21 +135,26 @@ class Agent:
 
                 return
 
-            # Close thinking display if necessary
+            # Close thinking display if necessary.
             if showing_thinking:
                 print("\n</think>")
 
             # ----------------------------------------
-            # Tool call
+            # Tool calls
             # ----------------------------------------
 
             assistant_tool_calls = []
 
             for tool_call in tool_calls:
-                call_id = f"call_{uuid.uuid4().hex[:12]}"
+                call_id = (
+                    f"call_{uuid.uuid4().hex[:12]}"
+                )
 
                 name = tool_call["name"]
-                arguments = tool_call.get("arguments", {})
+                arguments = tool_call.get(
+                    "arguments",
+                    {},
+                )
 
                 if isinstance(arguments, str):
                     arguments = json.loads(arguments)
@@ -127,30 +164,44 @@ class Agent:
                     "type": "function",
                     "function": {
                         "name": name,
-                        "arguments": json.dumps(arguments),
+                        "arguments": json.dumps(
+                            arguments
+                        ),
                     },
                 })
 
-            # Save the assistant's tool request
+            # Save Qwen's tool requests into conversation history.
             self.messages.append({
                 "role": "assistant",
                 "content": "",
                 "tool_calls": assistant_tool_calls,
             })
 
-            # Execute each requested tool
+            # Execute every requested tool.
             for tool_call in assistant_tool_calls:
-                name = tool_call["function"]["name"]
+                name = (
+                    tool_call["function"]["name"]
+                )
+
                 arguments = json.loads(
                     tool_call["function"]["arguments"]
                 )
 
-                result = await execute_tool(
-                    name,
-                    arguments,
-                )
+                try:
+                    result = await execute_tool(
+                        name,
+                        arguments,
+                    )
 
-                # Give result back to Qwen
+                except Exception as exc:
+                    # Give the error back to Qwen instead of
+                    # crashing the entire agent.
+                    result = {
+                        "success": False,
+                        "error": str(exc),
+                    }
+
+                # Give the result back to Qwen.
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
@@ -158,11 +209,18 @@ class Agent:
                 })
 
             # Loop again.
-            # Qwen now sees the tool result and can answer the user.
+            # Qwen now sees the tool results and can either:
+            #   1. answer the user
+            #   2. make another tool call
 
-        raise RuntimeError("Too many consecutive tool calls.")
+        raise RuntimeError(
+            "Too many consecutive tool calls."
+        )
 
-    def _parse_tool_calls(self, text: str):
+    def _parse_tool_calls(
+        self,
+        text: str,
+    ):
         calls = []
 
         matches = re.findall(
@@ -173,7 +231,10 @@ class Agent:
 
         for match in matches:
             try:
-                calls.append(json.loads(match))
+                calls.append(
+                    json.loads(match)
+                )
+
             except json.JSONDecodeError:
                 continue
 
