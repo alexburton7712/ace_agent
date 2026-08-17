@@ -261,6 +261,8 @@ async def generate_stream(messages, tools=None):
     sampling_params = SamplingParams(
         max_tokens=PROFILE["max_tokens"],
         temperature=PROFILE["temperature"],
+        top_p=PROFILE["top_p"],
+        top_k=PROFILE["top_k"],
     )
 
     chat_params = ChatParams(

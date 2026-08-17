@@ -35,8 +35,6 @@ class HomeAssistantClient:
                 "HOME_ASSISTANT_TOKEN environment variable is not set."
             )
 
-        # Prevent URLs like:
-        # http://homeassistant:8123//api/states
         self.base_url = self.base_url.rstrip("/")
 
         self._client = httpx.AsyncClient(

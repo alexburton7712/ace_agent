@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import re
 import uuid
 
@@ -9,6 +10,8 @@ from tools.registry import (
     execute_tool,
     get_tool_schemas,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Agent:
@@ -56,7 +59,13 @@ class Agent:
         )
 
         # Allow several rounds of tool calls before giving up.
-        for _ in range(8):
+        for round_number in range(1, 9):
+            logger.debug(
+                "Starting model round %d with %d messages",
+                round_number,
+                len(self.messages),
+            )
+
             response = ""
 
             showing_thinking = False
@@ -108,6 +117,12 @@ class Agent:
                     response_buffer = ""
 
             tool_calls = self._parse_tool_calls(response)
+
+            logger.debug(
+                "Model round %d completed; tool calls found: %d",
+                round_number,
+                len(tool_calls),
+            )
 
             # ----------------------------------------
             # Normal response
@@ -187,6 +202,13 @@ class Agent:
                     tool_call["function"]["arguments"]
                 )
 
+                logger.info(
+                    "Tool call started: id=%s name=%s arguments=%s",
+                    tool_call["id"],
+                    name,
+                    json.dumps(arguments, ensure_ascii=False),
+                )
+
                 try:
                     result = await execute_tool(
                         name,
@@ -194,12 +216,29 @@ class Agent:
                     )
 
                 except Exception as exc:
+                    logger.exception(
+                        "Tool call failed: id=%s name=%s",
+                        tool_call["id"],
+                        name,
+                    )
+
                     # Give the error back to Qwen instead of
                     # crashing the entire agent.
                     result = {
                         "success": False,
                         "error": str(exc),
                     }
+
+                logger.info(
+                    "Tool call completed: id=%s name=%s result=%s",
+                    tool_call["id"],
+                    name,
+                    json.dumps(
+                        result,
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                )
 
                 # Give the result back to Qwen.
                 self.messages.append({
@@ -236,6 +275,10 @@ class Agent:
                 )
 
             except json.JSONDecodeError:
+                logger.warning(
+                    "Ignoring malformed tool call payload: %r",
+                    match,
+                )
                 continue
 
         return calls
