@@ -9,17 +9,3 @@ services:
 
     env_file:
       - .env
-
-    volumes:
-      - hf_cache:/app/hf_cache   # persist downloaded model weights across restarts
-
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-volumes:
-  hf_cache:

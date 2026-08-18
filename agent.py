@@ -1,8 +1,6 @@
 import asyncio
 import json
 import logging
-import re
-import uuid
 
 from llm import generate_stream
 from tools.registry import (
@@ -70,7 +68,7 @@ class Agent:
 
             showing_thinking = False
             showing_response = False
-            response_buffer = ""
+            tool_calls = []
 
             async for chunk_type, chunk in generate_stream(
                 self.messages,
@@ -89,17 +87,6 @@ class Agent:
 
                 elif chunk_type == "response":
                     response += chunk
-                    response_buffer += chunk
-
-                    # Qwen may be starting a tool call.
-                    # Don't print tool-call markup to the user.
-                    stripped = response_buffer.lstrip()
-
-                    if (
-                        "<tool_call>".startswith(stripped)
-                        or stripped.startswith("<tool_call>")
-                    ):
-                        continue
 
                     # Normal assistant response.
                     if not showing_response:
@@ -109,14 +96,13 @@ class Agent:
                         showing_response = True
 
                     print(
-                        response_buffer,
+                        chunk,
                         end="",
                         flush=True,
                     )
 
-                    response_buffer = ""
-
-            tool_calls = self._parse_tool_calls(response)
+                elif chunk_type == "tool_calls":
+                    tool_calls = chunk
 
             logger.debug(
                 "Model round %d completed; tool calls found: %d",
@@ -128,19 +114,6 @@ class Agent:
             # Normal response
             # ----------------------------------------
             if not tool_calls:
-                if response_buffer:
-                    if (
-                        not showing_response
-                        and showing_thinking
-                    ):
-                        print("\n</think>")
-
-                    print(
-                        response_buffer,
-                        end="",
-                        flush=True,
-                    )
-
                 print()
 
                 self.messages.append({
@@ -158,49 +131,35 @@ class Agent:
             # Tool calls
             # ----------------------------------------
 
-            assistant_tool_calls = []
-
-            for tool_call in tool_calls:
-                call_id = (
-                    f"call_{uuid.uuid4().hex[:12]}"
-                )
-
-                name = tool_call["name"]
-                arguments = tool_call.get(
-                    "arguments",
-                    {},
-                )
-
-                if isinstance(arguments, str):
-                    arguments = json.loads(arguments)
-
-                assistant_tool_calls.append({
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": json.dumps(
-                            arguments
-                        ),
-                    },
-                })
-
-            # Save Qwen's tool requests into conversation history.
+            # Save vLLM's structured tool requests into conversation history.
             self.messages.append({
                 "role": "assistant",
-                "content": "",
-                "tool_calls": assistant_tool_calls,
+                "content": response or None,
+                "tool_calls": tool_calls,
             })
 
             # Execute every requested tool.
-            for tool_call in assistant_tool_calls:
+            for tool_call in tool_calls:
                 name = (
                     tool_call["function"]["name"]
                 )
 
-                arguments = json.loads(
-                    tool_call["function"]["arguments"]
-                )
+                try:
+                    arguments = json.loads(
+                        tool_call["function"]["arguments"]
+                    )
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "Malformed tool arguments from model: %r",
+                        tool_call["function"]["arguments"],
+                    )
+                    arguments = {}
+                    result = {
+                        "success": False,
+                        "error": f"Invalid tool arguments: {exc}",
+                    }
+                else:
+                    result = None
 
                 logger.info(
                     "Tool call started: id=%s name=%s arguments=%s",
@@ -210,10 +169,11 @@ class Agent:
                 )
 
                 try:
-                    result = await execute_tool(
-                        name,
-                        arguments,
-                    )
+                    if result is None:
+                        result = await execute_tool(
+                            name,
+                            arguments,
+                        )
 
                 except Exception as exc:
                     logger.exception(
@@ -255,30 +215,3 @@ class Agent:
         raise RuntimeError(
             "Too many consecutive tool calls."
         )
-
-    def _parse_tool_calls(
-        self,
-        text: str,
-    ):
-        calls = []
-
-        matches = re.findall(
-            r"<tool_call>\s*(.*?)\s*</tool_call>",
-            text,
-            re.DOTALL,
-        )
-
-        for match in matches:
-            try:
-                calls.append(
-                    json.loads(match)
-                )
-
-            except json.JSONDecodeError:
-                logger.warning(
-                    "Ignoring malformed tool call payload: %r",
-                    match,
-                )
-                continue
-
-        return calls
