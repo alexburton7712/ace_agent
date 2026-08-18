@@ -62,6 +62,46 @@ def _light_summary(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _light_details(state: dict[str, Any]) -> dict[str, Any]:
+    """Return convenient light fields while preserving every HA attribute."""
+    attributes = state.get("attributes", {})
+    raw_brightness = attributes.get("brightness")
+    brightness_pct = (
+        round(raw_brightness / 255 * 100)
+        if isinstance(raw_brightness, int)
+        else None
+    )
+    current_state = state.get("state", "unknown")
+
+    return {
+        "success": True,
+        "name": attributes.get("friendly_name", state["entity_id"]),
+        "entity_id": state["entity_id"],
+        "state": current_state,
+        "is_on": current_state == "on",
+        "brightness_pct": brightness_pct,
+        "brightness_raw": raw_brightness,
+        "color_mode": attributes.get("color_mode"),
+        "rgb_color": attributes.get("rgb_color"),
+        "xy_color": attributes.get("xy_color"),
+        "hs_color": attributes.get("hs_color"),
+        "rgbw_color": attributes.get("rgbw_color"),
+        "rgbww_color": attributes.get("rgbww_color"),
+        "color_temperature_kelvin": attributes.get("color_temp_kelvin"),
+        "color_temperature_mireds": attributes.get("color_temp"),
+        "effect": attributes.get("effect"),
+        "supported_color_modes": attributes.get("supported_color_modes", []),
+        "supported_features": attributes.get("supported_features"),
+        "last_changed": state.get("last_changed"),
+        "last_updated": state.get("last_updated"),
+        # Home Assistant integrations can expose device-specific attributes. Keep
+        # the complete payload so the agent can report information we do not yet
+        # normalize above.
+        "attributes": attributes,
+        "context": state.get("context"),
+    }
+
+
 def _resolve_light(
     light: str,
     states: list[dict[str, Any]],
@@ -130,10 +170,10 @@ async def _call_light_service(
 
 @tool(ListLightsParameters)
 async def list_lights() -> dict:
-    """List every light and light group currently exposed by Home Assistant.
+    """List the names of lights and light groups available for use with lighting tools.
 
-    Call this before using a lighting control tool. Use the returned entity IDs,
-    current states, and supported color modes to choose a valid target and action.
+    Call this before using a lighting control tool and pass one of the returned
+    names to that tool.
     """
     try:
         async with HomeAssistantClient() as client:
@@ -141,49 +181,60 @@ async def list_lights() -> dict:
     except (HomeAssistantError, ValueError) as exc:
         return {"success": False, "error": str(exc)}
 
-    lights = sorted(
+    light_names = sorted(
         (
-            _light_summary(state)
+            state.get("attributes", {}).get("friendly_name", state["entity_id"])
             for state in states
             if state.get("entity_id", "").startswith("light.")
         ),
-        key=lambda item: (item["name"].casefold(), item["entity_id"]),
+        key=str.casefold,
     )
     return {
         "success": True,
-        "count": len(lights),
-        "lights": lights,
+        "lights": light_names,
     }
 
 
 @tool(LightParameters)
-async def turn_on_light(light: str) -> dict:
-    """Turn on a Home Assistant light after calling list_lights.
+async def get_light_state(light: str) -> dict:
+    """Get all currently available state, color, brightness, and capability information for one Home Assistant light."""
+    try:
+        async with HomeAssistantClient() as client:
+            states = await client.get_states()
+            resolved = _resolve_light(light, states)
+            if isinstance(resolved, dict):
+                return resolved
 
-    Args:
-        light: Friendly name or entity ID of the light to turn on.
-    """
+            _, entity_id = resolved
+            state = next(
+                state for state in states
+                if state.get("entity_id") == entity_id
+            )
+    except (HomeAssistantError, ValueError) as exc:
+        return {
+            "success": False,
+            "error": str(exc),
+            "light": light,
+        }
+
+    return _light_details(state)
+
+
+@tool(LightParameters)
+async def turn_on_light(light: str) -> dict:
+    """Turn on a Home Assistant light after calling list_lights."""
     return await _call_light_service(light, "turn_on")
 
 
 @tool(LightParameters)
 async def turn_off_light(light: str) -> dict:
-    """Turn off a Home Assistant light after calling list_lights.
-
-    Args:
-        light: Friendly name or entity ID of the light to turn off.
-    """
+    """Turn off a Home Assistant light after calling list_lights."""
     return await _call_light_service(light, "turn_off")
 
 
 @tool(BrightnessParameters)
 async def set_light_brightness(light: str, brightness: int) -> dict:
-    """Set a light's brightness after calling list_lights, and turn it on.
-
-    Args:
-        light: Friendly name or entity ID of the light to control.
-        brightness: Desired brightness percentage from 0 (off) to 100 (full).
-    """
+    """Set a light's brightness after calling list_lights, and turn it on."""
     if isinstance(brightness, bool) or not isinstance(brightness, int):
         return {
             "success": False,
@@ -208,14 +259,7 @@ async def set_light_brightness(light: str, brightness: int) -> dict:
 
 @tool(ColorParameters)
 async def set_light_color(light: str, red: int, green: int, blue: int) -> dict:
-    """Set a light to RGB after list_lights confirms color support, and turn it on.
-
-    Args:
-        light: Friendly name or entity ID of the light to control.
-        red: Red channel from 0 to 255.
-        green: Green channel from 0 to 255.
-        blue: Blue channel from 0 to 255.
-    """
+    """Set a light to RGB after list_lights confirms color support, and turn it on."""
     channels = {"red": red, "green": green, "blue": blue}
 
     for name, value in channels.items():
@@ -242,12 +286,7 @@ async def set_light_color(light: str, red: int, green: int, blue: int) -> dict:
 
 @tool(ColorTemperatureParameters)
 async def set_light_color_temperature(light: str, temperature: int) -> dict:
-    """Set white temperature after list_lights confirms support, and turn the light on.
-
-    Args:
-        light: Friendly name or entity ID of the light to control.
-        temperature: Color temperature in Kelvin, typically 2000 (warm) to 6500 (cool).
-    """
+    """Set white temperature after list_lights confirms support, and turn the light on."""
     if isinstance(temperature, bool) or not isinstance(temperature, int):
         return {
             "success": False,
