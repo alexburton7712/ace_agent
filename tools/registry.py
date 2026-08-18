@@ -5,6 +5,7 @@ import tools
 from tools.tool import (
     build_tool_schema,
     get_registered_tools,
+    validate_tool_arguments,
 )
 
 
@@ -34,8 +35,8 @@ def get_tool_schemas():
     registered_tools = get_registered_tools()
 
     return [
-        build_tool_schema(function)
-        for function in registered_tools.values()
+        build_tool_schema(definition)
+        for definition in registered_tools.values()
     ]
 
 
@@ -45,11 +46,12 @@ async def execute_tool(
 ):
     registered_tools = get_registered_tools()
 
-    function = registered_tools.get(name)
+    definition = registered_tools.get(name)
 
-    if function is None:
+    if definition is None:
         raise ValueError(
             f"Unknown tool: {name}"
         )
 
-    return await function(**arguments)
+    arguments = validate_tool_arguments(definition, arguments)
+    return await definition.function(**arguments)

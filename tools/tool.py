@@ -1,146 +1,64 @@
 import inspect
-from typing import (
-    Any,
-    Literal,
-    get_args,
-    get_origin,
-    get_type_hints,
-)
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, TypeVar
 
-_REGISTERED_TOOLS = {}
+from pydantic import BaseModel, ValidationError
 
-
-def tool(function):
-    """
-    Mark an async function as an agent tool.
-    """
-
-    name = function.__name__
-
-    if name in _REGISTERED_TOOLS:
-        raise ValueError(
-            f"Tool '{name}' is already registered."
-        )
-
-    if not inspect.iscoroutinefunction(function):
-        raise TypeError(
-            f"Tool '{name}' must be async."
-        )
-
-    _REGISTERED_TOOLS[name] = function
-
-    return function
+ToolFunction = Callable[..., Any]
+ParametersModel = type[BaseModel]
+F = TypeVar("F", bound=ToolFunction)
 
 
-def get_registered_tools():
+@dataclass(frozen=True)
+class ToolDefinition:
+    function: ToolFunction
+    parameters_model: ParametersModel
+
+
+_REGISTERED_TOOLS: dict[str, ToolDefinition] = {}
+
+
+def tool(parameters_model: ParametersModel):
+    """Register an async function using a Pydantic argument model."""
+    if not inspect.isclass(parameters_model) or not issubclass(parameters_model, BaseModel):
+        raise TypeError("@tool expects a Pydantic BaseModel subclass.")
+
+    def decorator(function: F) -> F:
+        name = function.__name__
+        if name in _REGISTERED_TOOLS:
+            raise ValueError(f"Tool '{name}' is already registered.")
+        if not inspect.iscoroutinefunction(function):
+            raise TypeError(f"Tool '{name}' must be async.")
+
+        _REGISTERED_TOOLS[name] = ToolDefinition(function, parameters_model)
+        return function
+
+    return decorator
+
+
+def get_registered_tools() -> dict[str, ToolDefinition]:
     return _REGISTERED_TOOLS.copy()
 
 
-def python_type_to_json_schema(annotation):
-    """
-    Convert a Python type annotation into JSON schema.
-    """
-
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-
-    # str
-    if annotation is str:
-        return {
-            "type": "string"
-        }
-
-    # int
-    if annotation is int:
-        return {
-            "type": "integer"
-        }
-
-    # float
-    if annotation is float:
-        return {
-            "type": "number"
-        }
-
-    # bool
-    if annotation is bool:
-        return {
-            "type": "boolean"
-        }
-
-    # list[T]
-    if origin is list:
-        item_type = args[0] if args else Any
-
-        return {
-            "type": "array",
-            "items": python_type_to_json_schema(item_type),
-        }
-
-    # Literal["on", "off"]
-    if origin is Literal:
-        values = list(args)
-
-        schema = {
-            "enum": values,
-        }
-
-        if values:
-            first = values[0]
-
-            if isinstance(first, str):
-                schema["type"] = "string"
-            elif isinstance(first, int):
-                schema["type"] = "integer"
-            elif isinstance(first, float):
-                schema["type"] = "number"
-            elif isinstance(first, bool):
-                schema["type"] = "boolean"
-
-        return schema
-
-    # dict
-    if origin is dict or annotation is dict:
-        return {
-            "type": "object"
-        }
-
-    # fallback
-    return {}
-
-
-def build_tool_schema(function):
-    signature = inspect.signature(function)
-    type_hints = get_type_hints(function)
-
-    properties = {}
-    required = []
-
-    for name, parameter in signature.parameters.items():
-        annotation = type_hints.get(
-            name,
-            Any,
-        )
-
-        properties[name] = python_type_to_json_schema(
-            annotation
-        )
-
-        if parameter.default is inspect.Parameter.empty:
-            required.append(name)
-
-    description = inspect.getdoc(function) or ""
-
+def build_tool_schema(definition: ToolDefinition) -> dict[str, Any]:
+    function = definition.function
     return {
         "type": "function",
         "function": {
             "name": function.__name__,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-                "additionalProperties": False,
-            },
+            "description": inspect.getdoc(function) or "",
+            "parameters": definition.parameters_model.model_json_schema(),
         },
     }
+
+
+def validate_tool_arguments(
+    definition: ToolDefinition,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        parameters = definition.parameters_model.model_validate(arguments)
+    except ValidationError as exc:
+        raise ValueError(f"Invalid arguments for tool: {exc}") from exc
+    return parameters.model_dump()

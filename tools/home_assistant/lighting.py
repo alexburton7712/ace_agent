@@ -1,8 +1,48 @@
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from tools.tool import tool
 
 from .client import HomeAssistantClient, HomeAssistantError
+
+
+class ToolParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ListLightsParameters(ToolParameters):
+    pass
+
+
+class LightParameters(ToolParameters):
+    light: str = Field(
+        description="Friendly name or Home Assistant entity ID of the target light, preferably an entity ID returned by list_lights.",
+        min_length=1,
+    )
+
+
+class BrightnessParameters(LightParameters):
+    brightness: int = Field(
+        description="Desired brightness percentage, where 0 is off and 100 is full brightness.",
+        ge=0,
+        le=100,
+    )
+
+
+class ColorParameters(LightParameters):
+    red: int = Field(description="Red color channel intensity from 0 to 255.", ge=0, le=255)
+    green: int = Field(description="Green color channel intensity from 0 to 255.", ge=0, le=255)
+    blue: int = Field(description="Blue color channel intensity from 0 to 255.", ge=0, le=255)
+
+
+class ColorTemperatureParameters(LightParameters):
+    temperature: int = Field(
+        description="White color temperature in Kelvin; lower values are warmer and higher values are cooler.",
+        ge=1000,
+        le=10000,
+        examples=[2000, 6500],
+    )
 
 
 def _light_summary(state: dict[str, Any]) -> dict[str, Any]:
@@ -88,7 +128,7 @@ async def _call_light_service(
     }
 
 
-@tool
+@tool(ListLightsParameters)
 async def list_lights() -> dict:
     """List every light and light group currently exposed by Home Assistant.
 
@@ -116,7 +156,7 @@ async def list_lights() -> dict:
     }
 
 
-@tool
+@tool(LightParameters)
 async def turn_on_light(light: str) -> dict:
     """Turn on a Home Assistant light after calling list_lights.
 
@@ -126,7 +166,7 @@ async def turn_on_light(light: str) -> dict:
     return await _call_light_service(light, "turn_on")
 
 
-@tool
+@tool(LightParameters)
 async def turn_off_light(light: str) -> dict:
     """Turn off a Home Assistant light after calling list_lights.
 
@@ -136,7 +176,7 @@ async def turn_off_light(light: str) -> dict:
     return await _call_light_service(light, "turn_off")
 
 
-@tool
+@tool(BrightnessParameters)
 async def set_light_brightness(light: str, brightness: int) -> dict:
     """Set a light's brightness after calling list_lights, and turn it on.
 
@@ -166,7 +206,7 @@ async def set_light_brightness(light: str, brightness: int) -> dict:
     return result
 
 
-@tool
+@tool(ColorParameters)
 async def set_light_color(light: str, red: int, green: int, blue: int) -> dict:
     """Set a light to RGB after list_lights confirms color support, and turn it on.
 
@@ -200,7 +240,7 @@ async def set_light_color(light: str, red: int, green: int, blue: int) -> dict:
     return result
 
 
-@tool
+@tool(ColorTemperatureParameters)
 async def set_light_color_temperature(light: str, temperature: int) -> dict:
     """Set white temperature after list_lights confirms support, and turn the light on.
 
