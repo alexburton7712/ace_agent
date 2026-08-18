@@ -37,7 +37,7 @@ Thumbs.db
 
 # --- Docker itself ---
 Dockerfile
-docker-compose.yml
+compose.yaml
 .dockerignore
 
 # --- Logs ---
