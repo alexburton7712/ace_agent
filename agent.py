@@ -12,6 +12,8 @@ from tools.registry import (
 
 logger = logging.getLogger(__name__)
 
+MAX_USER_TURNS = 12
+
 
 class NoSpeechDetected(RuntimeError):
     """Raised when STT returns no usable transcript."""
@@ -64,8 +66,27 @@ class Agent:
                 "role": "user",
                 "content": prompt,
             })
+            self._trim_conversation_history()
 
             return await self.respond()
+
+    def _trim_conversation_history(self) -> None:
+        """Keep the system prompt and the newest complete user turns."""
+        user_message_indexes = [
+            index
+            for index, message in enumerate(self.messages)
+            if message["role"] == "user"
+        ]
+        if len(user_message_indexes) <= MAX_USER_TURNS:
+            return
+
+        first_retained_turn = user_message_indexes[-MAX_USER_TURNS]
+        system_messages = [
+            message
+            for message in self.messages[:first_retained_turn]
+            if message["role"] == "system"
+        ]
+        self.messages = system_messages + self.messages[first_retained_turn:]
 
     async def process_audio(self, audio: bytes) -> tuple[str, str]:
         """Transcribe audio, send the transcript to the LLM, and return both."""
