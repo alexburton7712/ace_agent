@@ -3,6 +3,7 @@ import json
 import logging
 
 from llm import generate_stream
+from stt import transcribe_wav
 from tools.registry import (
     discover_tools,
     execute_tool,
@@ -10,6 +11,10 @@ from tools.registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class NoSpeechDetected(RuntimeError):
+    """Raised when STT returns no usable transcript."""
 
 
 class Agent:
@@ -26,6 +31,8 @@ class Agent:
                 "content": self._load_system_prompt(),
             }
         ]
+        # Keep conversation history ordered when multiple HTTP requests arrive.
+        self._conversation_lock = asyncio.Lock()
 
     def _load_system_prompt(self):
         with open(
@@ -42,20 +49,34 @@ class Agent:
                 "You: ",
             )
 
+            response = await self.process(prompt)
+            print(f"Ace: {response}")
+
+    async def process(self, prompt: str) -> str:
+        """Process one user message and return the agent's final response."""
+        prompt = prompt.strip()
+        if not prompt:
+            raise ValueError("Prompt cannot be empty.")
+
+        async with self._conversation_lock:
+            logger.info("User: %s", prompt)
             self.messages.append({
                 "role": "user",
                 "content": prompt,
             })
 
-            await self.respond()
+            return await self.respond()
 
-    async def respond(self):
-        print(
-            "Ace:",
-            end=" ",
-            flush=True,
-        )
+    async def process_audio(self, audio: bytes) -> tuple[str, str]:
+        """Transcribe audio, send the transcript to the LLM, and return both."""
+        transcript = await transcribe_wav(audio)
+        if not transcript:
+            raise NoSpeechDetected("No speech was detected.")
 
+        response = await self.process(transcript)
+        return transcript, response
+
+    async def respond(self) -> str:
         # Allow several rounds of tool calls before giving up.
         for round_number in range(1, 9):
             logger.debug(
@@ -66,8 +87,6 @@ class Agent:
 
             response = ""
 
-            showing_thinking = False
-            showing_response = False
             tool_calls = []
 
             async for chunk_type, chunk in generate_stream(
@@ -75,31 +94,10 @@ class Agent:
                 tools=self.tools,
             ):
                 if chunk_type == "thinking":
-                    if not showing_thinking:
-                        print("<think>")
-                        showing_thinking = True
-
-                    print(
-                        chunk,
-                        end="",
-                        flush=True,
-                    )
+                    logger.debug("Model thinking: %s", chunk)
 
                 elif chunk_type == "response":
                     response += chunk
-
-                    # Normal assistant response.
-                    if not showing_response:
-                        if showing_thinking:
-                            print("\n</think>")
-
-                        showing_response = True
-
-                    print(
-                        chunk,
-                        end="",
-                        flush=True,
-                    )
 
                 elif chunk_type == "tool_calls":
                     tool_calls = chunk
@@ -114,18 +112,16 @@ class Agent:
             # Normal response
             # ----------------------------------------
             if not tool_calls:
-                print()
+                if not response.strip():
+                    raise RuntimeError("LLM returned an empty response.")
 
                 self.messages.append({
                     "role": "assistant",
                     "content": response,
                 })
 
-                return
-
-            # Close thinking display if necessary.
-            if showing_thinking:
-                print("\n</think>")
+                logger.info("Ace: %s", response)
+                return response
 
             # ----------------------------------------
             # Tool calls
