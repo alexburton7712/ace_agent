@@ -44,6 +44,9 @@ compose.yaml
 *.log
 logs/
 
+# --- Companion services (mounted directly by Compose) ---
+searxng/
+
 local_notes.txt
 
 .env
