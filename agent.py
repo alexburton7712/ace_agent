@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 
+from conversation import ConversationManager, DEFAULT_MAX_USER_TURNS
 from llm import generate_stream
 from stt import transcribe_wav
 from tools.registry import (
@@ -12,7 +13,7 @@ from tools.registry import (
 
 logger = logging.getLogger(__name__)
 
-MAX_USER_TURNS = 12
+MAX_USER_TURNS = DEFAULT_MAX_USER_TURNS
 
 
 class NoSpeechDetected(RuntimeError):
@@ -27,14 +28,10 @@ class Agent:
         # Build the schemas once and give them to the LLM.
         self.tools = get_tool_schemas()
 
-        self.messages = [
-            {
-                "role": "system",
-                "content": self._load_system_prompt(),
-            }
-        ]
-        # Keep conversation history ordered when multiple HTTP requests arrive.
-        self._conversation_lock = asyncio.Lock()
+        self.conversation = ConversationManager(
+            system_prompt=self._load_system_prompt(),
+            max_user_turns=MAX_USER_TURNS,
+        )
 
     def _load_system_prompt(self):
         with open(
@@ -60,33 +57,25 @@ class Agent:
         if not prompt:
             raise ValueError("Prompt cannot be empty.")
 
-        async with self._conversation_lock:
+        async with self.conversation.lock:
             logger.info("User: %s", prompt)
-            self.messages.append({
+            self.conversation.append({
                 "role": "user",
                 "content": prompt,
             })
-            self._trim_conversation_history()
 
             return await self.respond()
 
-    def _trim_conversation_history(self) -> None:
-        """Keep the system prompt and the newest complete user turns."""
-        user_message_indexes = [
-            index
-            for index, message in enumerate(self.messages)
-            if message["role"] == "user"
-        ]
-        if len(user_message_indexes) <= MAX_USER_TURNS:
-            return
+    @property
+    def conversation_history(self) -> list[dict]:
+        """Return the complete conversation history."""
+        return self.conversation.history
 
-        first_retained_turn = user_message_indexes[-MAX_USER_TURNS]
-        system_messages = [
-            message
-            for message in self.messages[:first_retained_turn]
-            if message["role"] == "system"
-        ]
-        self.messages = system_messages + self.messages[first_retained_turn:]
+    async def clear_conversation(self) -> None:
+        """Wait for active processing, then reset the conversation."""
+        async with self.conversation.lock:
+            self.conversation.clear()
+            logger.info("Conversation cleared")
 
     async def process_audio(self, audio: bytes) -> tuple[str, str]:
         """Transcribe audio, send the transcript to the LLM, and return both."""
@@ -100,10 +89,11 @@ class Agent:
     async def respond(self) -> str:
         # Allow several rounds of tool calls before giving up.
         for round_number in range(1, 9):
+            model_messages = self.conversation.model_messages()
             logger.debug(
                 "Starting model round %d with %d messages",
                 round_number,
-                len(self.messages),
+                len(model_messages),
             )
 
             response = ""
@@ -111,7 +101,7 @@ class Agent:
             tool_calls = []
 
             async for chunk_type, chunk in generate_stream(
-                self.messages,
+                model_messages,
                 tools=self.tools,
             ):
                 if chunk_type == "thinking":
@@ -136,7 +126,7 @@ class Agent:
                 if not response.strip():
                     raise RuntimeError("LLM returned an empty response.")
 
-                self.messages.append({
+                self.conversation.append({
                     "role": "assistant",
                     "content": response,
                 })
@@ -149,7 +139,7 @@ class Agent:
             # ----------------------------------------
 
             # Save vLLM's structured tool requests into conversation history.
-            self.messages.append({
+            self.conversation.append({
                 "role": "assistant",
                 "content": response or None,
                 "tool_calls": tool_calls,
@@ -218,7 +208,7 @@ class Agent:
                 )
 
                 # Give the result back to Qwen.
-                self.messages.append({
+                self.conversation.append({
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
                     "content": json.dumps(result),

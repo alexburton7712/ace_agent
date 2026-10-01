@@ -13,6 +13,7 @@ import api
 
 class AudioEndpointTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        api.agent.conversation.clear()
         transport = httpx.ASGITransport(app=api.app)
         self.client = httpx.AsyncClient(
             transport=transport,
@@ -23,7 +24,7 @@ class AudioEndpointTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_health(self):
-        response = await self.client.get("/health")
+        response = await self.client.get("/api/health")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
@@ -37,7 +38,7 @@ class AudioEndpointTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch.object(api.agent, "process_audio", new=process_audio):
             response = await self.client.post(
-                "/audio",
+                "/api/audio",
                 files={"file": ("command.wav", b"wav-data", "audio/wav")},
             )
 
@@ -47,14 +48,14 @@ class AudioEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             response.json(),
             {
-                "transcript": "Turn on the kitchen light.",
+                "transcription": "Turn on the kitchen light.",
                 "response": "The kitchen light is on.",
             },
         )
 
     async def test_audio_rejects_invalid_wav(self):
         response = await self.client.post(
-            "/audio",
+            "/api/audio",
             files={"file": ("command.wav", b"not-a-wave-file", "audio/wav")},
         )
 
@@ -62,9 +63,23 @@ class AudioEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["detail"], "Audio must be a valid WAV file.")
 
     async def test_audio_requires_file(self):
-        response = await self.client.post("/audio")
+        response = await self.client.post("/api/audio")
 
         self.assertEqual(response.status_code, 422)
+
+    async def test_clear_conversation_resets_agent_history(self):
+        api.agent.conversation.append(
+            {"role": "user", "content": "Remember this message."}
+        )
+        api.agent.conversation.append(
+            {"role": "assistant", "content": "I will remember it."}
+        )
+
+        response = await self.client.delete("/api/conversation")
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.content, b"")
+        self.assertEqual(api.agent.conversation_history, [])
 
 
 if __name__ == "__main__":

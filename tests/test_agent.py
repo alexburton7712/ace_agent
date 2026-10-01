@@ -67,12 +67,11 @@ class AgentAudioTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentHistoryTests(unittest.TestCase):
-    def test_history_keeps_only_the_newest_complete_user_turns(self):
+    def test_model_context_keeps_only_newest_turns_and_full_history(self):
         agent = Agent()
-        system_message = agent.messages[0]
 
         for turn in range(MAX_USER_TURNS + 1):
-            agent.messages.extend([
+            for message in [
                 {"role": "user", "content": f"user-{turn}"},
                 {
                     "role": "assistant",
@@ -85,39 +84,61 @@ class AgentHistoryTests(unittest.TestCase):
                     "content": f"result-{turn}",
                 },
                 {"role": "assistant", "content": f"assistant-{turn}"},
-            ])
+            ]:
+                agent.conversation.append(message)
 
-        agent._trim_conversation_history()
+        model_messages = agent.conversation.model_messages()
+        full_history = agent.conversation_history
 
-        self.assertIs(agent.messages[0], system_message)
+        self.assertEqual(len(full_history), (MAX_USER_TURNS + 1) * 4)
         self.assertEqual(
-            sum(message["role"] == "user" for message in agent.messages),
+            sum(message["role"] == "user" for message in model_messages),
             MAX_USER_TURNS,
         )
         self.assertNotIn(
             "user-0",
-            [message.get("content") for message in agent.messages],
+            [message.get("content") for message in model_messages],
+        )
+        self.assertIn(
+            "user-0",
+            [message.get("content") for message in full_history],
         )
         self.assertNotIn(
             "call-0",
-            [message.get("tool_call_id") for message in agent.messages],
+            [message.get("tool_call_id") for message in model_messages],
         )
-        self.assertEqual(agent.messages[1]["content"], "user-1")
-        self.assertEqual(agent.messages[2]["tool_calls"][0]["id"], "call-1")
-        self.assertEqual(agent.messages[3]["tool_call_id"], "call-1")
+        self.assertEqual(model_messages[0]["role"], "system")
+        self.assertEqual(model_messages[1]["content"], "user-1")
+        self.assertEqual(model_messages[2]["tool_calls"][0]["id"], "call-1")
+        self.assertEqual(model_messages[3]["tool_call_id"], "call-1")
 
-    def test_history_does_not_trim_at_the_limit(self):
+    def test_model_context_contains_all_history_at_limit(self):
         agent = Agent()
         for turn in range(MAX_USER_TURNS):
-            agent.messages.extend([
-                {"role": "user", "content": f"user-{turn}"},
-                {"role": "assistant", "content": f"assistant-{turn}"},
-            ])
-        original_messages = agent.messages
+            agent.conversation.append(
+                {"role": "user", "content": f"user-{turn}"}
+            )
+            agent.conversation.append(
+                {"role": "assistant", "content": f"assistant-{turn}"}
+            )
 
-        agent._trim_conversation_history()
+        model_messages = agent.conversation.model_messages()
 
-        self.assertIs(agent.messages, original_messages)
+        self.assertEqual(model_messages[1:], agent.conversation_history)
+
+
+class AgentClearConversationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_clear_removes_history_and_keeps_system_prompt(self):
+        agent = Agent()
+        agent.conversation.append({"role": "user", "content": "Remember this"})
+        agent.conversation.append({"role": "assistant", "content": "I will"})
+
+        await agent.clear_conversation()
+
+        self.assertEqual(agent.conversation_history, [])
+        model_messages = agent.conversation.model_messages()
+        self.assertEqual(len(model_messages), 1)
+        self.assertEqual(model_messages[0]["role"], "system")
 
 
 if __name__ == "__main__":
