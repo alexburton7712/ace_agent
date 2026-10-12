@@ -28,8 +28,12 @@ class CreateWidgetParameters(BaseModel):
     widget: str = Field(
         min_length=1,
         description=(
-            "Self-contained HTML fragment with inline CSS and optional inline JavaScript. "
-            "Network access and external assets are unavailable."
+            "Raw, self-contained HTML fragment. Do not use Markdown code fences or "
+            "include <html>, <head>, or <body> tags. Use only inline CSS and optional "
+            "inline JavaScript; external assets, libraries, URLs, network requests, "
+            "and nested frames are unavailable. Set explicit background and text "
+            "colors, and render meaningful visible content immediately without "
+            "requiring initial user interaction."
         ),
     )
 
