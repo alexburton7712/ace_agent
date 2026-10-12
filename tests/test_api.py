@@ -9,6 +9,7 @@ os.environ.setdefault("VLLM_MODEL", "test-model")
 import httpx
 
 import api
+from tools.widgets.context import get_widget_callback
 
 
 class AudioEndpointTests(unittest.IsolatedAsyncioTestCase):
@@ -52,6 +53,31 @@ class AudioEndpointTests(unittest.IsolatedAsyncioTestCase):
                 "response": "The kitchen light is on.",
             },
         )
+
+    async def test_audio_exposes_widget_headers_only_during_request(self):
+        observed_callback = None
+
+        async def process_audio(_audio):
+            nonlocal observed_callback
+            observed_callback = get_widget_callback()
+            return "Show the weather.", "Displayed."
+
+        with patch.object(api.agent, "process_audio", side_effect=process_audio):
+            response = await self.client.post(
+                "/api/audio",
+                headers={
+                    "X-Ace-Widget-Callback": "http://127.0.0.1:4321/api/widgets",
+                    "X-Ace-Widget-Token": "launch-secret",
+                    "X-Ace-Widget-Protocol": "1",
+                },
+                files={"file": ("command.wav", b"wav-data", "audio/wav")},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed_callback.url, "http://127.0.0.1:4321/api/widgets")
+        self.assertEqual(observed_callback.token, "launch-secret")
+        self.assertEqual(observed_callback.protocol, "1")
+        self.assertIsNone(get_widget_callback())
 
     async def test_audio_rejects_invalid_wav(self):
         response = await self.client.post(

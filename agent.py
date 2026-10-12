@@ -20,6 +20,16 @@ class NoSpeechDetected(RuntimeError):
     """Raised when STT returns no usable transcript."""
 
 
+def _loggable_tool_arguments(name: str, arguments: dict) -> dict:
+    """Keep large or potentially sensitive widget markup out of logs."""
+    if name != "create_widget" or "widget" not in arguments:
+        return arguments
+    return {
+        **arguments,
+        "widget": f"<redacted {len(str(arguments['widget']))} characters>",
+    }
+
+
 class Agent:
     def __init__(self):
         # Discover all @tool decorated functions once at startup.
@@ -158,7 +168,11 @@ class Agent:
                 except json.JSONDecodeError as exc:
                     logger.warning(
                         "Malformed tool arguments from model: %r",
-                        tool_call["function"]["arguments"],
+                        (
+                            "<redacted malformed widget arguments>"
+                            if name == "create_widget"
+                            else tool_call["function"]["arguments"]
+                        ),
                     )
                     arguments = {}
                     result = {
@@ -172,7 +186,10 @@ class Agent:
                     "Tool call started: id=%s name=%s arguments=%s",
                     tool_call["id"],
                     name,
-                    json.dumps(arguments, ensure_ascii=False),
+                    json.dumps(
+                        _loggable_tool_arguments(name, arguments),
+                        ensure_ascii=False,
+                    ),
                 )
 
                 try:

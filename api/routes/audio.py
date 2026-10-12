@@ -1,12 +1,13 @@
 import logging
 import os
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from agent import NoSpeechDetected
 from api.dependencies import agent
 from stt import TranscriptionError
+from tools.widgets.context import widget_callback_scope
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,13 +21,19 @@ class AudioResponse(BaseModel):
 
 
 @router.post("/audio", response_model=AudioResponse)
-async def upload_audio(file: UploadFile = File(...)) -> AudioResponse:
+async def upload_audio(
+    file: UploadFile = File(...),
+    widget_callback: str | None = Header(default=None, alias="X-Ace-Widget-Callback"),
+    widget_token: str | None = Header(default=None, alias="X-Ace-Widget-Token"),
+    widget_protocol: str | None = Header(default=None, alias="X-Ace-Widget-Protocol"),
+) -> AudioResponse:
     audio = await file.read(MAX_AUDIO_BYTES + 1)
     if len(audio) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Audio file is too large.")
 
     try:
-        transcription, response = await agent.process_audio(audio)
+        with widget_callback_scope(widget_callback, widget_token, widget_protocol):
+            transcription, response = await agent.process_audio(audio)
     except NoSpeechDetected as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:

@@ -6,7 +6,7 @@ os.environ.setdefault("VLLM_BASE_URL", "http://example.invalid/v1")
 os.environ.setdefault("VLLM_API_KEY", "test-key")
 os.environ.setdefault("VLLM_MODEL", "test-model")
 
-from agent import MAX_USER_TURNS, Agent, NoSpeechDetected
+from agent import MAX_USER_TURNS, Agent, NoSpeechDetected, _loggable_tool_arguments
 
 
 class AgentAudioTests(unittest.IsolatedAsyncioTestCase):
@@ -47,6 +47,15 @@ class AgentAudioTests(unittest.IsolatedAsyncioTestCase):
                 await agent.process_audio(b"wav-data")
 
         process.assert_not_awaited()
+
+    def test_widget_html_is_redacted_from_tool_logs(self):
+        arguments = {"id": "weather", "widget": "<p>Secret details</p>"}
+
+        result = _loggable_tool_arguments("create_widget", arguments)
+
+        self.assertEqual(result["id"], "weather")
+        self.assertNotIn("Secret details", result["widget"])
+        self.assertEqual(arguments["widget"], "<p>Secret details</p>")
 
     async def test_process_logs_user_and_agent_response(self):
         agent = Agent()

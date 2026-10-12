@@ -4,8 +4,11 @@ services:
     build: .
     container_name: ace
 
-    ports:
-      - "8001:8000"
+    # Ace App advertises its widget callback on host loopback. Sharing the
+    # Linux host network lets Ace reach that per-launch callback without
+    # exposing the widget listener beyond 127.0.0.1.
+    network_mode: host
+    command: ["uvicorn", "api:app", "--host", "127.0.0.1", "--port", "8001"]
 
     env_file:
       - .env
